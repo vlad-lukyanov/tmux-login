@@ -292,10 +292,16 @@ fi
 
 # ── интерактивные сценарии (pty, изолированный сервер) ───────────────────────
 # Принудительно маленький терминал → детерминированное текстовое меню.
+# TERM в CI может быть не задан; без него tmux-login корректно уходит в shell.
+TEST_TERM=${TERM:-}
+if [[ -z $TEST_TERM || $TEST_TERM == dumb ]]; then
+    TEST_TERM=xterm-256color
+fi
+
 pty() { # $1 — таймаут; вход подаётся снаружи через pipe
     local timeout_s=$1
     shift
-    timeout "$timeout_s" script -qec "stty rows 10 cols 50; exec env -u TMUX '$SCRIPT'" /dev/null
+    timeout "$timeout_s" script -qec "stty rows 10 cols 50; exec env -u TMUX TERM=$TEST_TERM '$SCRIPT'" /dev/null
 }
 
 # attach + detach: меню 1=t1, 2=new, 3=rename, 4=kill, 5=shell
@@ -325,7 +331,7 @@ else
     keys='6\n'
 fi
 ( sleep 1; printf '%b' "$keys"; sleep 1 ) \
-    | timeout 30 script -qec "exec env -u TMUX '$SCRIPT'" /dev/null >"$TDIR/shell.out" 2>&1
+    | timeout 30 script -qec "exec env -u TMUX TERM=$TEST_TERM '$SCRIPT'" /dev/null >"$TDIR/shell.out" 2>&1
 assert_eq "shell/whiptail: выход в shell → код 10" 10 $?
 
 # rename t1 → t1r: 4=rename, 1=t1, новое имя, 6=shell
