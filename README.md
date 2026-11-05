@@ -82,7 +82,7 @@ make deb
 Результат — `dist/tmux-login_<версия>_all.deb`.
 
 ```bash
-sudo dpkg -i dist/tmux-login_1.1.0-1_all.deb
+sudo dpkg -i dist/tmux-login_1.2.0-1_all.deb
 sudo apt-get -f install     # при необходимости доустановить зависимости
 ```
 
@@ -98,12 +98,51 @@ sudo apt-get -f install     # при необходимости доустано
 Параметры сборки:
 
 ```bash
-DEB_VERSION=1.1.0-1 ./packaging/build-deb.sh   # версия пакета
+DEB_VERSION=1.2.0-1 ./packaging/build-deb.sh   # версия пакета
 MAINTAINER='Имя <mail@example.com>' ./packaging/build-deb.sh
 DIST_DIR=/tmp/debs ./packaging/build-deb.sh    # куда положить .deb
 ```
 
-Пакет **не** меняет `~/.bashrc` автоматически (это per-user настройка).
+## Сборка и установка .rpm
+
+Для сборки нужен `rpmbuild`:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install rpm
+# Fedora/RHEL
+sudo dnf install rpm-build
+```
+
+```bash
+./packaging/build-rpm.sh
+# или, если установлен make:
+make rpm
+```
+
+Результат — `dist/tmux-login-<версия>-<релиз>.noarch.rpm`.
+
+```bash
+sudo dnf install dist/tmux-login-1.2.0-1.noarch.rpm
+# или:
+sudo rpm -i dist/tmux-login-1.2.0-1.noarch.rpm
+```
+
+Пакет ставит те же файлы, что и `.deb`: `/usr/bin/tmux-login`,
+`/usr/bin/tmux-login-enable`, man-страницы и документацию в
+`/usr/share/doc/tmux-login/`.
+
+Параметры сборки:
+
+```bash
+RPM_RELEASE=2 ./packaging/build-rpm.sh                    # номер релиза
+MAINTAINER='Имя <mail@example.com>' ./packaging/build-rpm.sh
+DIST_DIR=/tmp/rpms ./packaging/build-rpm.sh               # куда положить .rpm
+```
+
+## Включение автозапуска
+
+Пакеты **не** меняют `~/.bashrc` автоматически (это per-user настройка).
 После установки включи автозапуск от своего пользователя:
 
 ```bash
@@ -116,10 +155,11 @@ tmux-login-enable --bashrc ~/.bashrc
 безопасен — блок заменяется, а не дублируется. Удаление пакета:
 
 ```bash
-sudo dpkg -r tmux-login
+sudo dpkg -r tmux-login        # Debian/Ubuntu
+sudo rpm -e tmux-login         # Fedora/RHEL
 ```
 
-Хук в `~/.bashrc` при этом остаётся (пакет не трогает домашний каталог);
+Хук в `~/.bashrc` при этом остаётся (пакеты не трогают домашний каталог);
 убери его командой `tmux-login-enable --remove` до удаления пакета.
 
 ## Использование
@@ -182,37 +222,42 @@ fi
 make lint     # bash -n + shellcheck (если установлен)
 make test     # автотесты на отдельном tmux-сервере (-L)
 make deb      # собрать .deb в dist/
+make rpm      # собрать .rpm в dist/
 make all      # lint + test
 
 # без make:
 ./tests/run-tests.sh
 ./packaging/build-deb.sh
+./packaging/build-rpm.sh
 ```
 
 Тесты не трогают реальные сессии: для скрипта подменяется `tmux` через
 shim с отдельным сокетом, а интерактивные сценарии прогоняются в pty через
-`script`. Сборка `.deb` также проверяется тестами (если установлен
-`dpkg-deb`).
+`script`. Сборка `.deb` и `.rpm` также проверяется тестами (если установлены
+`dpkg-deb` / `rpmbuild`).
 
 Структура:
 
 ```
 tmux-login/
-├── bin/tmux-login          # основной скрипт
-├── bin/tmux-login-enable   # управление хуком в ~/.bashrc
-├── man/                    # man-страницы
-├── packaging/build-deb.sh  # сборка .deb
-├── install.sh              # установка из репозитория
-├── uninstall.sh            # удаление
-├── tests/run-tests.sh      # автотесты
+├── bin/tmux-login              # основной скрипт
+├── bin/tmux-login-enable       # управление хуком в ~/.bashrc
+├── man/                        # man-страницы
+├── packaging/build-deb.sh      # сборка .deb
+├── packaging/build-rpm.sh      # сборка .rpm
+├── packaging/tmux-login.spec.in # шаблон RPM spec
+├── install.sh                  # установка из репозитория
+├── uninstall.sh                # удаление
+├── tests/run-tests.sh          # автотесты
 ├── Makefile
 ├── .github/workflows/ci.yml
 ├── LICENSE
 └── README.md
 ```
 
-CI (GitHub Actions) выполняет линтер и тесты, а отдельной job собирает
-`.deb`, проверяет его содержимое через `dpkg-deb` и загружает как артефакт.
+CI (GitHub Actions) выполняет линтер и тесты, а отдельные job собирают
+`.deb` и `.rpm`, проверяют содержимое (`dpkg-deb` / `rpm`) и загружают
+пакеты как артефакты.
 
 ## Ограничения
 

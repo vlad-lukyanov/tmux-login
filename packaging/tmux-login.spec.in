@@ -1,0 +1,41 @@
+Name:           tmux-login
+Version:        @VERSION@
+Release:        @RELEASE@
+Summary:        Interactive tmux session picker for SSH logins
+
+License:        MIT
+Source0:        %{name}-%{version}.tar.gz
+BuildArch:      noarch
+
+Requires:       bash >= 4.4
+Requires:       tmux
+Recommends:     whiptail
+
+%description
+Shows a menu of tmux sessions when logging in over SSH. Allows attaching
+to an existing session, creating a new session, renaming or deleting
+sessions, and dropping to a normal shell. Works with whiptail or a
+plain-text fallback.
+
+%prep
+%setup -q
+
+%install
+rm -rf %{buildroot}
+install -d %{buildroot}%{_bindir}
+install -m 0755 bin/tmux-login %{buildroot}%{_bindir}/tmux-login
+install -m 0755 bin/tmux-login-enable %{buildroot}%{_bindir}/tmux-login-enable
+install -d %{buildroot}%{_mandir}/man1
+install -m 0644 man/tmux-login.1 %{buildroot}%{_mandir}/man1/tmux-login.1
+install -m 0644 man/tmux-login-enable.1 %{buildroot}%{_mandir}/man1/tmux-login-enable.1
+
+%files
+%{_bindir}/tmux-login
+%{_bindir}/tmux-login-enable
+%{_mandir}/man1/tmux-login.1*
+%{_mandir}/man1/tmux-login-enable.1*
+%doc README.md LICENSE
+
+%changelog
+* @DATE@ @MAINTAINER@ - @VERSION@-@RELEASE@
+- Package built from upstream @VERSION@.

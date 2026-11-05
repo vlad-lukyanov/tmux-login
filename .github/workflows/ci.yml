@@ -15,7 +15,7 @@ jobs:
       - name: Установить зависимости
         run: |
           sudo apt-get update
-          sudo apt-get install -y tmux shellcheck dpkg-dev
+          sudo apt-get install -y tmux shellcheck dpkg-dev rpm cpio
 
       - name: Линтер
         run: make lint
@@ -54,4 +54,53 @@ jobs:
         with:
           name: tmux-login-deb
           path: dist/*.deb
+          if-no-files-found: error
+
+  rpm:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm cpio
+
+      - name: Собрать .rpm
+        run: ./packaging/build-rpm.sh
+
+      - name: Проверить пакет
+        run: |
+          set -euo pipefail
+          RPM=$(ls dist/tmux-login-*.rpm)
+          echo "Пакет: $RPM"
+          rpm -qip "$RPM"
+          rpm -qlp "$RPM"
+          rpm -qp --queryformat 'Name: %{NAME}\nVersion: %{VERSION}-%{RELEASE}\nArchitecture: %{ARCH}\n' "$RPM"
+          rpm -qp --requires "$RPM"
+          rpm -qp --recommends "$RPM"
+
+          FILES=$(rpm -qlp "$RPM")
+          for path in /usr/bin/tmux-login /usr/bin/tmux-login-enable; do
+            grep -qxF "$path" <<<"$FILES"
+          done
+          grep -qE '^/usr/share/man/man1/tmux-login\.1(\.gz)?$' <<<"$FILES"
+          grep -qE '^/usr/share/man/man1/tmux-login-enable\.1(\.gz)?$' <<<"$FILES"
+
+          EXTRACT=$(mktemp -d)
+          rpm2cpio "$RPM" | (cd "$EXTRACT" && cpio -idm --quiet)
+          "$EXTRACT/usr/bin/tmux-login" --version
+          printf '# test\n' > "$EXTRACT/bashrc"
+          TMUX_LOGIN_BIN="$EXTRACT/usr/bin/tmux-login" \
+            "$EXTRACT/usr/bin/tmux-login-enable" --bashrc "$EXTRACT/bashrc"
+          grep -qF '# >>> tmux-login >>>' "$EXTRACT/bashrc"
+          "$EXTRACT/usr/bin/tmux-login-enable" --remove --bashrc "$EXTRACT/bashrc"
+          ! grep -qF '# >>> tmux-login >>>' "$EXTRACT/bashrc"
+
+      - name: Загрузить артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-login-rpm
+          path: dist/*.rpm
           if-no-files-found: error

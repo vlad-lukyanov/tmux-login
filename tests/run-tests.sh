@@ -57,7 +57,7 @@ trap cleanup EXIT
 tmux_test() { "$REAL_TMUX" -L "$SOCKET" "$@"; }
 
 # ── синтаксис ────────────────────────────────────────────────────────────────
-for f in "$SCRIPT" "$ROOT/bin/tmux-login-enable" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/packaging/build-deb.sh" "${BASH_SOURCE[0]}"; do
+for f in "$SCRIPT" "$ROOT/bin/tmux-login-enable" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/packaging/build-deb.sh" "$ROOT/packaging/build-rpm.sh" "${BASH_SOURCE[0]}"; do
     if bash -n "$f" 2>/dev/null; then
         ok "синтаксис: ${f##*/}"
     else
@@ -67,7 +67,7 @@ done
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 out=$("$SCRIPT" --version 2>&1)
-assert_contains "--version" "1.1.0" "$out"
+assert_contains "--version" "1.2.0" "$out"
 
 out=$("$SCRIPT" --help 2>&1)
 assert_contains "--help" "Использование" "$out"
@@ -169,6 +169,66 @@ if command -v dpkg-deb >/dev/null 2>&1; then
     fi
 else
     printf 'skip: dpkg-deb не установлен — сборка .deb не проверялась\n'
+fi
+
+# ── сборка .rpm ──────────────────────────────────────────────────────────────
+if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+    DIST_DIR="$TDIR/dist-rpm" "$ROOT/packaging/build-rpm.sh" >/dev/null 2>&1
+    assert_eq "build-rpm.sh rc" 0 $?
+
+    VERSION=$("$SCRIPT" --version | awk '{print $2}')
+    rpm_file=$(find "$TDIR/dist-rpm" -maxdepth 1 -name 'tmux-login-*.rpm' -print -quit 2>/dev/null)
+    if [[ -n $rpm_file ]]; then
+        ok "rpm: файл создан"
+    else
+        bad "rpm: файл создан"
+    fi
+
+    if [[ -n $rpm_file ]]; then
+        fields=$(rpm -qp --queryformat 'Package: %{NAME}\nVersion: %{VERSION}-%{RELEASE}\nArchitecture: %{ARCH}\n' "$rpm_file" 2>&1)
+        assert_contains "rpm: Package" "Package: tmux-login" "$fields"
+        assert_contains "rpm: Version" "Version: ${VERSION}-1" "$fields"
+        assert_contains "rpm: Architecture" "Architecture: noarch" "$fields"
+
+        contents=$(rpm -qlp "$rpm_file" 2>&1)
+        if printf '%s\n' "$contents" | grep -qxF '/usr/bin/tmux-login'; then
+            ok "rpm: /usr/bin/tmux-login"
+        else
+            bad "rpm: /usr/bin/tmux-login"
+        fi
+        if printf '%s\n' "$contents" | grep -qxF '/usr/bin/tmux-login-enable'; then
+            ok "rpm: /usr/bin/tmux-login-enable"
+        else
+            bad "rpm: /usr/bin/tmux-login-enable"
+        fi
+        if printf '%s\n' "$contents" | grep -qE '^/usr/share/man/man1/tmux-login\.1(\.gz)?$'; then
+            ok "rpm: man tmux-login"
+        else
+            bad "rpm: man tmux-login"
+        fi
+        if printf '%s\n' "$contents" | grep -qE '^/usr/share/man/man1/tmux-login-enable\.1(\.gz)?$'; then
+            ok "rpm: man tmux-login-enable"
+        else
+            bad "rpm: man tmux-login-enable"
+        fi
+
+        if command -v rpm2cpio >/dev/null 2>&1 && command -v cpio >/dev/null 2>&1; then
+            mkdir -p "$TDIR/rpm-root"
+            if rpm2cpio "$rpm_file" | (cd "$TDIR/rpm-root" && cpio -idm --quiet) 2>/dev/null; then
+                if [[ -x "$TDIR/rpm-root/usr/bin/tmux-login" ]]; then
+                    ok "rpm: бинарник исполняемый"
+                else
+                    bad "rpm: бинарник исполняемый"
+                fi
+                out=$("$TDIR/rpm-root/usr/bin/tmux-login" --version 2>&1)
+                assert_contains "rpm: бинарник запускается" "$VERSION" "$out"
+            else
+                bad "rpm: распаковка"
+            fi
+        fi
+    fi
+else
+    printf 'skip: rpmbuild не установлен — сборка .rpm не проверялась\n'
 fi
 
 # ── интерактивные сценарии (pty, изолированный сервер) ───────────────────────
