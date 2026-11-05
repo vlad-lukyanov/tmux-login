@@ -68,6 +68,60 @@ make install PREFIX=~/.local BASHRC=~/.bashrc
 make uninstall
 ```
 
+## Сборка и установка .deb
+
+Пакет собирается штатным `dpkg-deb` — `debhelper`, `fakeroot` и `make` не
+нужны.
+
+```bash
+./packaging/build-deb.sh
+# или, если установлен make:
+make deb
+```
+
+Результат — `dist/tmux-login_<версия>_all.deb`.
+
+```bash
+sudo dpkg -i dist/tmux-login_1.1.0-1_all.deb
+sudo apt-get -f install     # при необходимости доустановить зависимости
+```
+
+Пакет ставит:
+
+| Путь | Назначение |
+|------|------------|
+| `/usr/bin/tmux-login` | основной скрипт |
+| `/usr/bin/tmux-login-enable` | включение/выключение хука в `~/.bashrc` |
+| `/usr/share/man/man1/*.1.gz` | man-страницы |
+| `/usr/share/doc/tmux-login/` | README, copyright, changelog |
+
+Параметры сборки:
+
+```bash
+DEB_VERSION=1.1.0-1 ./packaging/build-deb.sh   # версия пакета
+MAINTAINER='Имя <mail@example.com>' ./packaging/build-deb.sh
+DIST_DIR=/tmp/debs ./packaging/build-deb.sh    # куда положить .deb
+```
+
+Пакет **не** меняет `~/.bashrc` автоматически (это per-user настройка).
+После установки включи автозапуск от своего пользователя:
+
+```bash
+tmux-login-enable              # добавить хук в ~/.bashrc
+tmux-login-enable --remove     # убрать хук
+tmux-login-enable --bashrc ~/.bashrc
+```
+
+Перед изменением создаётся `~/.bashrc.bak.tmux-login`; повторный запуск
+безопасен — блок заменяется, а не дублируется. Удаление пакета:
+
+```bash
+sudo dpkg -r tmux-login
+```
+
+Хук в `~/.bashrc` при этом остаётся (пакет не трогает домашний каталог);
+убери его командой `tmux-login-enable --remove` до удаления пакета.
+
 ## Использование
 
 Новое SSH-подключение сразу показывает меню. Текущие открытые сессии
@@ -127,29 +181,38 @@ fi
 ```bash
 make lint     # bash -n + shellcheck (если установлен)
 make test     # автотесты на отдельном tmux-сервере (-L)
+make deb      # собрать .deb в dist/
 make all      # lint + test
 
 # без make:
 ./tests/run-tests.sh
+./packaging/build-deb.sh
 ```
 
 Тесты не трогают реальные сессии: для скрипта подменяется `tmux` через
 shim с отдельным сокетом, а интерактивные сценарии прогоняются в pty через
-`script`.
+`script`. Сборка `.deb` также проверяется тестами (если установлен
+`dpkg-deb`).
 
 Структура:
 
 ```
 tmux-login/
-├── bin/tmux-login        # основной скрипт
-├── install.sh            # установка
-├── uninstall.sh          # удаление
-├── tests/run-tests.sh    # автотесты
+├── bin/tmux-login          # основной скрипт
+├── bin/tmux-login-enable   # управление хуком в ~/.bashrc
+├── man/                    # man-страницы
+├── packaging/build-deb.sh  # сборка .deb
+├── install.sh              # установка из репозитория
+├── uninstall.sh            # удаление
+├── tests/run-tests.sh      # автотесты
 ├── Makefile
 ├── .github/workflows/ci.yml
 ├── LICENSE
 └── README.md
 ```
+
+CI (GitHub Actions) выполняет линтер и тесты, а отдельной job собирает
+`.deb`, проверяет его содержимое через `dpkg-deb` и загружает как артефакт.
 
 ## Ограничения
 

@@ -57,7 +57,7 @@ trap cleanup EXIT
 tmux_test() { "$REAL_TMUX" -L "$SOCKET" "$@"; }
 
 # ── синтаксис ────────────────────────────────────────────────────────────────
-for f in "$SCRIPT" "$ROOT/install.sh" "$ROOT/uninstall.sh" "${BASH_SOURCE[0]}"; do
+for f in "$SCRIPT" "$ROOT/bin/tmux-login-enable" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/packaging/build-deb.sh" "${BASH_SOURCE[0]}"; do
     if bash -n "$f" 2>/dev/null; then
         ok "синтаксис: ${f##*/}"
     else
@@ -67,7 +67,7 @@ done
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 out=$("$SCRIPT" --version 2>&1)
-assert_contains "--version" "1.0.0" "$out"
+assert_contains "--version" "1.1.0" "$out"
 
 out=$("$SCRIPT" --help 2>&1)
 assert_contains "--help" "Использование" "$out"
@@ -108,6 +108,68 @@ fi
 BASHRC="$THOME/.bashrc" PREFIX="$THOME/.local" "$ROOT/uninstall.sh" >/dev/null 2>&1
 grep -qF '# >>> tmux-login >>>' "$THOME/.bashrc" && bad "uninstall: хук удалён" || ok "uninstall: хук удалён"
 [[ -e "$THOME/.local/bin/tmux-login" ]] && bad "uninstall: скрипт удалён" || ok "uninstall: скрипт удалён"
+
+# ── tmux-login-enable в песочнице ────────────────────────────────────────────
+ENABLE="$ROOT/bin/tmux-login-enable"
+EBASHRC="$THOME/.bashrc-enable"
+printf '# enable test\n' > "$EBASHRC"
+
+TMUX_LOGIN_BIN="$SCRIPT" "$ENABLE" --bashrc "$EBASHRC" >/dev/null 2>&1
+assert_eq "enable rc" 0 $?
+grep -qF '# >>> tmux-login >>>' "$EBASHRC" && ok "enable: хук добавлен" || bad "enable: хук добавлен"
+grep -qF "$SCRIPT" "$EBASHRC" && ok "enable: путь к бинарнику" || bad "enable: путь к бинарнику"
+
+TMUX_LOGIN_BIN="$SCRIPT" "$ENABLE" --bashrc "$EBASHRC" >/dev/null 2>&1
+count=$(grep -cF '# >>> tmux-login >>>' "$EBASHRC")
+assert_eq "enable идемпотентен" 1 "$count"
+
+if bash -n "$EBASHRC" 2>/dev/null; then
+    ok "enable: сгенерированный .bashrc валиден"
+else
+    bad "enable: сгенерированный .bashrc валиден"
+fi
+
+"$ENABLE" --remove --bashrc "$EBASHRC" >/dev/null 2>&1
+assert_eq "enable --remove rc" 0 $?
+grep -qF '# >>> tmux-login >>>' "$EBASHRC" && bad "enable: хук удалён" || ok "enable: хук удалён"
+
+# ── сборка .deb ──────────────────────────────────────────────────────────────
+if command -v dpkg-deb >/dev/null 2>&1; then
+    DIST_DIR="$TDIR/dist" "$ROOT/packaging/build-deb.sh" >/dev/null 2>&1
+    assert_eq "build-deb.sh rc" 0 $?
+
+    deb=$(find "$TDIR/dist" -maxdepth 1 -name 'tmux-login_*.deb' -print -quit 2>/dev/null)
+    if [[ -n $deb ]]; then
+        ok "deb: файл создан"
+    else
+        bad "deb: файл создан"
+    fi
+
+    if [[ -n $deb ]]; then
+        VERSION=$("$SCRIPT" --version | awk '{print $2}')
+        contents=$(dpkg-deb --contents "$deb" 2>&1)
+        assert_contains "deb: /usr/bin/tmux-login" "./usr/bin/tmux-login" "$contents"
+        assert_contains "deb: /usr/bin/tmux-login-enable" "./usr/bin/tmux-login-enable" "$contents"
+        assert_contains "deb: man tmux-login" "usr/share/man/man1/tmux-login.1.gz" "$contents"
+        assert_contains "deb: man tmux-login-enable" "usr/share/man/man1/tmux-login-enable.1.gz" "$contents"
+
+        fields=$(dpkg-deb --field "$deb" 2>&1)
+        assert_contains "deb: Package" "Package: tmux-login" "$fields"
+        assert_contains "deb: Version" "Version: ${VERSION}-1" "$fields"
+        assert_contains "deb: Architecture" "Architecture: all" "$fields"
+
+        dpkg-deb --extract "$deb" "$TDIR/deb-root" >/dev/null 2>&1
+        if [[ -x "$TDIR/deb-root/usr/bin/tmux-login" ]]; then
+            ok "deb: бинарник исполняемый"
+        else
+            bad "deb: бинарник исполняемый"
+        fi
+        out=$("$TDIR/deb-root/usr/bin/tmux-login" --version 2>&1)
+        assert_contains "deb: бинарник запускается" "$VERSION" "$out"
+    fi
+else
+    printf 'skip: dpkg-deb не установлен — сборка .deb не проверялась\n'
+fi
 
 # ── интерактивные сценарии (pty, изолированный сервер) ───────────────────────
 # Принудительно маленький терминал → детерминированное текстовое меню.

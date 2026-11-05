@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash
 PREFIX ?= $(HOME)/.local
 BASHRC ?= $(HOME)/.bashrc
 
-.PHONY: all install uninstall test lint help
+.PHONY: all install uninstall test lint deb help
 
 all: lint test
 
@@ -16,13 +16,18 @@ uninstall:
 test:
 	./tests/run-tests.sh
 
+deb:
+	./packaging/build-deb.sh
+
 lint:
 	@bash -n bin/tmux-login
+	@bash -n bin/tmux-login-enable
 	@bash -n install.sh
 	@bash -n uninstall.sh
+	@bash -n packaging/build-deb.sh
 	@bash -n tests/run-tests.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck -S error -x bin/tmux-login install.sh uninstall.sh tests/run-tests.sh; \
+		shellcheck -S error -x bin/tmux-login bin/tmux-login-enable install.sh uninstall.sh packaging/build-deb.sh tests/run-tests.sh; \
 	else \
 		echo "shellcheck не установлен — пропуск"; \
 	fi
@@ -34,6 +39,7 @@ help:
 		'  make install     установить в ~/.local/bin и добавить хук в ~/.bashrc' \
 		'  make uninstall   удалить хук и скрипт' \
 		'  make test        запустить автотесты (изолированный tmux-сервер)' \
+		'  make deb         собрать .deb в dist/' \
 		'  make lint        bash -n + shellcheck (если установлен)' \
 		'  make all         lint + test' \
 		'' \

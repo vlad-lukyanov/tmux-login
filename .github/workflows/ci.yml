@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 jobs:
@@ -14,10 +15,43 @@ jobs:
       - name: Установить зависимости
         run: |
           sudo apt-get update
-          sudo apt-get install -y tmux shellcheck
+          sudo apt-get install -y tmux shellcheck dpkg-dev
 
       - name: Линтер
         run: make lint
 
       - name: Тесты
         run: make test
+
+  deb:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+
+      - name: Собрать .deb
+        run: ./packaging/build-deb.sh
+
+      - name: Проверить пакет
+        run: |
+          set -euo pipefail
+          DEB=$(ls dist/tmux-login_*.deb)
+          echo "Пакет: $DEB"
+          dpkg-deb --field "$DEB" Package Version Architecture Depends Recommends
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+          dpkg-deb --contents "$DEB" | grep -q './usr/bin/tmux-login$'
+          dpkg-deb --contents "$DEB" | grep -q './usr/bin/tmux-login-enable$'
+          dpkg-deb --contents "$DEB" | grep -q './usr/share/man/man1/tmux-login.1.gz$'
+
+      - name: Загрузить артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-login-deb
+          path: dist/*.deb
+          if-no-files-found: error
