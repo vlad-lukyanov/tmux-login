@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash
 PREFIX ?= $(HOME)/.local
 BASHRC ?= $(HOME)/.bashrc
 
-.PHONY: all install uninstall test lint deb rpm help
+.PHONY: all install uninstall test lint deb rpm overlay help
 
 all: lint test
 
@@ -22,6 +22,9 @@ deb:
 rpm:
 	./packaging/build-rpm.sh
 
+overlay:
+	./sync-overlay.sh
+
 lint:
 	@bash -n bin/tmux-login
 	@bash -n bin/tmux-login-enable
@@ -29,9 +32,11 @@ lint:
 	@bash -n uninstall.sh
 	@bash -n packaging/build-deb.sh
 	@bash -n packaging/build-rpm.sh
+	@bash -n sync-overlay.sh
+	@bash -n app-admin/tmux-login/*.ebuild
 	@bash -n tests/run-tests.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck -S error -x bin/tmux-login bin/tmux-login-enable install.sh uninstall.sh packaging/build-deb.sh packaging/build-rpm.sh tests/run-tests.sh; \
+		shellcheck -S error -x bin/tmux-login bin/tmux-login-enable install.sh uninstall.sh packaging/build-deb.sh packaging/build-rpm.sh sync-overlay.sh tests/run-tests.sh; \
 	else \
 		echo "shellcheck не установлен — пропуск"; \
 	fi
@@ -45,6 +50,7 @@ help:
 		'  make test        запустить автотесты (изолированный tmux-сервер)' \
 		'  make deb         собрать .deb в dist/' \
 		'  make rpm         собрать .rpm в dist/' \
+		'  make overlay     синхронизировать Gentoo overlay' \
 		'  make lint        bash -n + shellcheck (если установлен)' \
 		'  make all         lint + test' \
 		'' \

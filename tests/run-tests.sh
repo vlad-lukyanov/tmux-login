@@ -57,7 +57,7 @@ trap cleanup EXIT
 tmux_test() { "$REAL_TMUX" -L "$SOCKET" "$@"; }
 
 # ── синтаксис ────────────────────────────────────────────────────────────────
-for f in "$SCRIPT" "$ROOT/bin/tmux-login-enable" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/packaging/build-deb.sh" "$ROOT/packaging/build-rpm.sh" "${BASH_SOURCE[0]}"; do
+for f in "$SCRIPT" "$ROOT/bin/tmux-login-enable" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/packaging/build-deb.sh" "$ROOT/packaging/build-rpm.sh" "$ROOT/sync-overlay.sh" "$ROOT"/app-admin/tmux-login/*.ebuild "${BASH_SOURCE[0]}"; do
     if bash -n "$f" 2>/dev/null; then
         ok "синтаксис: ${f##*/}"
     else
@@ -67,7 +67,7 @@ done
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 out=$("$SCRIPT" --version 2>&1)
-assert_contains "--version" "1.2.0" "$out"
+assert_contains "--version" "1.3.0" "$out"
 
 out=$("$SCRIPT" --help 2>&1)
 assert_contains "--help" "Использование" "$out"
@@ -229,6 +229,65 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     fi
 else
     printf 'skip: rpmbuild не установлен — сборка .rpm не проверялась\n'
+fi
+
+# ── gentoo overlay ───────────────────────────────────────────────────────────
+PKG="$ROOT/app-admin/tmux-login"
+VERSION=$("$SCRIPT" --version | awk '{print $2}')
+ebuild_file=$(find "$PKG" -maxdepth 1 -name '*.ebuild' -print -quit 2>/dev/null)
+
+if [[ -n $ebuild_file ]]; then
+    ok "gentoo: ebuild найден"
+else
+    bad "gentoo: ebuild найден"
+fi
+
+if [[ -n $ebuild_file && $(basename "$ebuild_file") == "tmux-login-${VERSION}.ebuild" ]]; then
+    ok "gentoo: версия ebuild совпадает"
+else
+    bad "gentoo: версия ebuild совпадает"
+fi
+
+if "$ROOT/sync-overlay.sh" --check >/dev/null 2>&1; then
+    ok "gentoo: files/ и Manifest синхронизированы"
+else
+    bad "gentoo: files/ и Manifest синхронизированы"
+fi
+
+if [[ -f $ROOT/metadata/layout.conf ]] && grep -q '^masters = gentoo$' "$ROOT/metadata/layout.conf"; then
+    ok "gentoo: metadata/layout.conf"
+else
+    bad "gentoo: metadata/layout.conf"
+fi
+
+if [[ -f $ROOT/profiles/repo_name && -f $ROOT/profiles/categories ]]; then
+    ok "gentoo: profiles/repo_name и categories"
+else
+    bad "gentoo: profiles/repo_name и categories"
+fi
+
+if [[ -n $ebuild_file ]] && grep -q '^EAPI=8$' "$ebuild_file"; then
+    ok "gentoo: EAPI=8"
+else
+    bad "gentoo: EAPI=8"
+fi
+
+if [[ -n $ebuild_file ]] && grep -q 'app-misc/tmux' "$ebuild_file"; then
+    ok "gentoo: зависимость tmux"
+else
+    bad "gentoo: зависимость tmux"
+fi
+
+if [[ -n $ebuild_file ]] && grep -q 'app-shells/bash' "$ebuild_file"; then
+    ok "gentoo: зависимость bash"
+else
+    bad "gentoo: зависимость bash"
+fi
+
+if [[ -n $ebuild_file ]] && grep -qF 'HOMEPAGE="https://github.com/vlad-lukyanov/tmux-login"' "$ebuild_file"; then
+    ok "gentoo: HOMEPAGE указывает на GitHub"
+else
+    bad "gentoo: HOMEPAGE указывает на GitHub"
 fi
 
 # ── интерактивные сценарии (pty, изолированный сервер) ───────────────────────

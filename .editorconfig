@@ -11,6 +11,9 @@ indent_size = 4
 [Makefile]
 indent_style = tab
 
+[*.ebuild]
+indent_style = tab
+
 [*.yml]
 indent_size = 2
 

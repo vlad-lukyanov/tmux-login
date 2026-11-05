@@ -1,0 +1,55 @@
+.TH TMUX-LOGIN-ENABLE 1 "2026-11-05" "tmux-login 1.3.0" "Пользовательские команды"
+.SH ИМЯ
+tmux-login-enable \- включить или выключить автозапуск tmux-login
+.SH СИНТАКСИС
+.B tmux-login-enable
+.RB [ \-\-bashrc " " FILE ]
+.br
+.B tmux-login-enable
+.B \-\-remove
+.RB [ \-\-bashrc " " FILE ]
+.SH ОПИСАНИЕ
+.B tmux-login-enable
+добавляет в
+.I ~/.bashrc
+блок между маркерами
+.B "# >>> tmux-login >>>"
+и
+.BR "# <<< tmux-login <<<" ,
+который запускает
+.B tmux-login
+при интерактивном входе по SSH вне tmux.
+.PP
+Повторный запуск безопасен: старый блок заменяется, а не дублируется.
+Перед изменением создаётся резервная копия
+.IR ~/.bashrc.bak.tmux-login .
+.SH КЛЮЧИ
+.TP
+.B \-\-remove
+Удалить блок автозапуска из bashrc.
+.TP
+.BI \-\-bashrc " " FILE
+Использовать указанный файл вместо
+.IR ~/.bashrc .
+.TP
+.B \-\-help
+Показать справку.
+.SH ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+.TP
+.B BASHRC
+Файл bashrc по умолчанию.
+.TP
+.B TMUX_LOGIN_BIN
+Путь к исполняемому файлу
+.BR tmux-login .
+По умолчанию ищется в
+.IR /usr/bin ,
+.IR /usr/local/bin ,
+.IR ~/.local/bin
+и в
+.BR PATH .
+.SH СМ. ТАКЖЕ
+.BR tmux-login (1),
+.BR tmux (1)
+.SH АВТОР
+tmux-login contributors.

@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Управление хуком tmux-login в ~/.bashrc (для установки из .deb).
+set -euo pipefail
+
+MARK_BEGIN="# >>> tmux-login >>>"
+MARK_END="# <<< tmux-login <<<"
+BASHRC=${BASHRC:-$HOME/.bashrc}
+ACTION=install
+BIN=${TMUX_LOGIN_BIN:-}
+
+usage() {
+    cat <<EOF
+tmux-login-enable — включить или выключить меню tmux-login при входе по SSH.
+
+Использование:
+  tmux-login-enable [--bashrc FILE]
+  tmux-login-enable --remove [--bashrc FILE]
+  tmux-login-enable --help
+
+Переменные окружения:
+  BASHRC           файл bashrc (по умолчанию: \$HOME/.bashrc)
+  TMUX_LOGIN_BIN   путь к tmux-login (по умолчанию: ищется автоматически)
+EOF
+}
+
+die() {
+    printf 'Ошибка: %s\n' "$*" >&2
+    exit 1
+}
+
+remove_block() {
+    [[ -f $BASHRC ]] || return 0
+    grep -qF "$MARK_BEGIN" "$BASHRC" || return 0
+
+    local tmp
+    tmp=$(mktemp "${BASHRC}.tmp.XXXXXX")
+    awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip   { print }
+    ' "$BASHRC" > "$tmp"
+    cat "$tmp" > "$BASHRC"
+    rm -f "$tmp"
+}
+
+find_bin() {
+    if [[ -n $BIN ]]; then
+        printf '%s\n' "$BIN"
+        return 0
+    fi
+
+    local candidate
+    for candidate in /usr/bin/tmux-login /usr/local/bin/tmux-login "$HOME/.local/bin/tmux-login"; do
+        if [[ -x $candidate ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    candidate=$(command -v tmux-login 2>/dev/null || true)
+    [[ -n $candidate ]] || return 1
+    printf '%s\n' "$candidate"
+}
+
+while (($#)); do
+    case $1 in
+        --remove)
+            ACTION=remove
+            shift
+            ;;
+        --bashrc)
+            (($# >= 2)) || die "--bashrc требует аргумент"
+            BASHRC=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "неизвестный аргумент: $1 (см. --help)"
+            ;;
+    esac
+done
+
+case $BASHRC in
+    /*) ;;
+    *) BASHRC="$PWD/$BASHRC" ;;
+esac
+
+if [[ $ACTION == remove ]]; then
+    if [[ -f $BASHRC ]] && grep -qF "$MARK_BEGIN" "$BASHRC"; then
+        cp -p "$BASHRC" "${BASHRC}.bak.tmux-login"
+        remove_block
+        printf 'Хук tmux-login удалён из %s\n' "$BASHRC"
+    else
+        printf 'Хук tmux-login в %s не найден\n' "$BASHRC"
+    fi
+    exit 0
+fi
+
+BIN=$(find_bin) || die "tmux-login не найден (задай TMUX_LOGIN_BIN)"
+[[ -x $BIN ]] || die "не исполняемый файл: $BIN"
+
+[[ -f $BASHRC ]] || : > "$BASHRC"
+cp -p "$BASHRC" "${BASHRC}.bak.tmux-login"
+remove_block
+
+if [[ -s $BASHRC ]] && [[ -n $(tail -c 1 "$BASHRC") ]]; then
+    printf '\n' >> "$BASHRC"
+fi
+
+cat >> "$BASHRC" <<EOF
+$MARK_BEGIN
+# Интерактивный выбор tmux-сессии при входе по SSH.
+# Отключить: tmux-login-enable --remove
+if [[ -x "$BIN" && -n \${SSH_CONNECTION:-} && -z \${TMUX:-} && -z \${TMUX_PICKER_ACTIVE:-} ]]; then
+    export TMUX_PICKER_ACTIVE=1
+    "$BIN"
+    if (( \$? == 0 )); then
+        exit 0   # отцепились от tmux — закрываем SSH-соединение
+    fi
+fi
+$MARK_END
+EOF
+
+printf 'Хук добавлен в %s (бинарник: %s)\n' "$BASHRC" "$BIN"
+printf 'Проверка: открой новое SSH-подключение\n'

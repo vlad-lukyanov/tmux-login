@@ -82,7 +82,7 @@ make deb
 Результат — `dist/tmux-login_<версия>_all.deb`.
 
 ```bash
-sudo dpkg -i dist/tmux-login_1.2.0-1_all.deb
+sudo dpkg -i dist/tmux-login_1.3.0-1_all.deb
 sudo apt-get -f install     # при необходимости доустановить зависимости
 ```
 
@@ -98,7 +98,7 @@ sudo apt-get -f install     # при необходимости доустано
 Параметры сборки:
 
 ```bash
-DEB_VERSION=1.2.0-1 ./packaging/build-deb.sh   # версия пакета
+DEB_VERSION=1.3.0-1 ./packaging/build-deb.sh   # версия пакета
 MAINTAINER='Имя <mail@example.com>' ./packaging/build-deb.sh
 DIST_DIR=/tmp/debs ./packaging/build-deb.sh    # куда положить .deb
 ```
@@ -123,9 +123,9 @@ make rpm
 Результат — `dist/tmux-login-<версия>-<релиз>.noarch.rpm`.
 
 ```bash
-sudo dnf install dist/tmux-login-1.2.0-1.noarch.rpm
+sudo dnf install dist/tmux-login-1.3.0-1.noarch.rpm
 # или:
-sudo rpm -i dist/tmux-login-1.2.0-1.noarch.rpm
+sudo rpm -i dist/tmux-login-1.3.0-1.noarch.rpm
 ```
 
 Пакет ставит те же файлы, что и `.deb`: `/usr/bin/tmux-login`,
@@ -138,6 +138,31 @@ sudo rpm -i dist/tmux-login-1.2.0-1.noarch.rpm
 RPM_RELEASE=2 ./packaging/build-rpm.sh                    # номер релиза
 MAINTAINER='Имя <mail@example.com>' ./packaging/build-rpm.sh
 DIST_DIR=/tmp/rpms ./packaging/build-rpm.sh               # куда положить .rpm
+```
+
+## Gentoo (overlay)
+
+Весь репозиторий является Gentoo-overlay с пакетом
+`app-admin/tmux-login`. Подробная инструкция — [`GENTOO.md`](GENTOO.md).
+
+Кратко:
+
+```bash
+sudo emerge --ask app-eselect/eselect-repository
+sudo eselect repository add tmux-login git https://github.com/vlad-lukyanov/tmux-login.git
+sudo emaint sync -r tmux-login
+
+sudo mkdir -p /etc/portage/package.accept_keywords
+echo 'app-admin/tmux-login ~amd64' | sudo tee /etc/portage/package.accept_keywords/tmux-login
+sudo emerge -av app-admin/tmux-login
+```
+
+Ebuild ставит готовые скрипты и man-страницы, сборка не требуется.
+После изменения `bin/`, `man/` или документации обнови overlay:
+
+```bash
+./sync-overlay.sh          # или make overlay
+./sync-overlay.sh --check
 ```
 
 ## Включение автозапуска
@@ -157,6 +182,7 @@ tmux-login-enable --bashrc ~/.bashrc
 ```bash
 sudo dpkg -r tmux-login        # Debian/Ubuntu
 sudo rpm -e tmux-login         # Fedora/RHEL
+sudo emerge --unmerge app-admin/tmux-login   # Gentoo
 ```
 
 Хук в `~/.bashrc` при этом остаётся (пакеты не трогают домашний каталог);
@@ -223,18 +249,21 @@ make lint     # bash -n + shellcheck (если установлен)
 make test     # автотесты на отдельном tmux-сервере (-L)
 make deb      # собрать .deb в dist/
 make rpm      # собрать .rpm в dist/
+make overlay  # синхронизировать Gentoo overlay (files + Manifest)
 make all      # lint + test
 
 # без make:
 ./tests/run-tests.sh
 ./packaging/build-deb.sh
 ./packaging/build-rpm.sh
+./sync-overlay.sh
 ```
 
 Тесты не трогают реальные сессии: для скрипта подменяется `tmux` через
 shim с отдельным сокетом, а интерактивные сценарии прогоняются в pty через
 `script`. Сборка `.deb` и `.rpm` также проверяется тестами (если установлены
-`dpkg-deb` / `rpmbuild`).
+`dpkg-deb` / `rpmbuild`), а для Gentoo-overlay проверяется синхронизация
+`files/` и `Manifest`.
 
 Структура:
 
@@ -246,6 +275,11 @@ tmux-login/
 ├── packaging/build-deb.sh      # сборка .deb
 ├── packaging/build-rpm.sh      # сборка .rpm
 ├── packaging/tmux-login.spec.in # шаблон RPM spec
+├── app-admin/tmux-login/       # Gentoo ebuild и files/
+├── metadata/                   # Gentoo overlay metadata
+├── profiles/                   # Gentoo overlay profiles
+├── sync-overlay.sh             # синхронизация Gentoo overlay
+├── GENTOO.md                   # инструкция по Gentoo overlay
 ├── install.sh                  # установка из репозитория
 ├── uninstall.sh                # удаление
 ├── tests/run-tests.sh          # автотесты
