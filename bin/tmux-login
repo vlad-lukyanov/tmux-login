@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# tmux-login — интерактивный выбор tmux-сессии при входе по SSH.
+#
+# Коды возврата:
+#   0  — пользователь отцепился от tmux (или создал сессию и отцепился):
+#         вызывающий хук в ~/.bashrc закрывает SSH-соединение;
+#   10 — показать обычный shell (отмена, «выйти в shell», нет tty и т.п.).
+#
+# Диагностика без интерактива:
+#   tmux-login --list
+
+set -u
+
+VERSION="1.0.0"
+EXIT_SHELL=10
+export TMUX_PICKER_ACTIVE=1
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+usage() {
+    cat <<EOF
+${0##*/} $VERSION — выбор tmux-сессии при входе по SSH.
+
+Использование:
+  ${0##*/}            интерактивное меню
+  ${0##*/} --list     список сессий (без интерактива)
+  ${0##*/} --version  версия
+  ${0##*/} --help     эта справка
+
+Меню позволяет подключиться к существующей сессии, создать новую,
+переименовать или удалить сессию, а также выйти в обычный shell.
+EOF
+}
+
+S_NAMES=()
+declare -A S_INFO=()
+declare -A S_ATTACHED=()
+
+# ── сессии ───────────────────────────────────────────────────────────────────
+load_sessions() {
+    S_NAMES=()
+    S_INFO=()
+    S_ATTACHED=()
+
+    local name windows attached created_epoch created
+    while IFS=$'\t' read -r name windows attached created_epoch; do
+        [[ -n $name ]] || continue
+        created=$(date -d "@${created_epoch:-0}" '+%d.%m %H:%M' 2>/dev/null) || created=$created_epoch
+        S_NAMES+=("$name")
+        S_INFO["$name"]="$windows окн. | $attached | $created"
+        S_ATTACHED["$name"]=$attached
+    done < <(tmux list-sessions -F \
+        '#{session_name}'$'\t''#{session_windows}'$'\t''#{?session_attached,attached,detached}'$'\t''#{session_created}' \
+        2>/dev/null)
+}
+
+# ── размеры терминала ────────────────────────────────────────────────────────
+UI=whiptail
+MENU_H=20
+MENU_W=74
+LIST_H=10
+
+term_size() {
+    local lines cols
+    lines=$(tput lines 2>/dev/null) || lines=""
+    cols=$(tput cols 2>/dev/null) || cols=""
+    [[ $lines =~ ^[0-9]+$ ]] || lines=${LINES:-24}
+    [[ $cols =~ ^[0-9]+$ ]] || cols=${COLUMNS:-80}
+    (( lines > 0 )) || lines=24
+    (( cols > 0 )) || cols=80
+
+    # слишком маленький терминал — whiptail будет ругаться, уходим в текст
+    if (( lines < 12 || cols < 60 )); then
+        UI=plain
+    fi
+
+    MENU_H=$(( lines - 4 ))
+    (( MENU_H > 28 )) && MENU_H=28
+    (( MENU_H < 10 )) && MENU_H=10
+
+    MENU_W=$(( cols - 8 ))
+    (( MENU_W > 100 )) && MENU_W=100
+    (( MENU_W < 50 )) && MENU_W=50
+
+    LIST_H=$(( MENU_H - 8 ))
+    (( LIST_H < 3 )) && LIST_H=3
+    (( LIST_H > 12 )) && LIST_H=12
+}
+
+# ── UI-примитивы ─────────────────────────────────────────────────────────────
+menu_select() {
+    # $1 — заголовок, далее пункты. Печатает индекс (0-based); код 1 при отмене.
+    local title=$1
+    shift
+    local -a items=("$@")
+    local count=${#items[@]}
+    (( count > 0 )) || return 1
+
+    if [[ $UI == whiptail ]]; then
+        local list_h=$(( count < LIST_H ? count : LIST_H ))
+        local -a args=(--title " $title " --menu "Выберите пункт:" "$MENU_H" "$MENU_W" "$list_h")
+        local i choice
+        for i in "${!items[@]}"; do
+            args+=("$((i + 1))" "${items[$i]}")
+        done
+        choice=$(whiptail "${args[@]}" 3>&1 1>&2 2>&3) || return 1
+        [[ $choice =~ ^[0-9]+$ ]] || return 1
+        (( choice >= 1 && choice <= count )) || return 1
+        printf '%s\n' "$((choice - 1))"
+    else
+        local i ans
+        printf '\n=== %s ===\n' "$title" >&2
+        for i in "${!items[@]}"; do
+            printf '  %2d) %s\n' "$((i + 1))" "${items[$i]}" >&2
+        done
+        while true; do
+            printf 'Выбор [1-%d] (q — выход): ' "$count" >&2
+            read -r ans || return 1
+            [[ $ans == [qQ] ]] && return 1
+            if [[ $ans =~ ^[0-9]+$ ]] && (( ans >= 1 && ans <= count )); then
+                printf '%s\n' "$((ans - 1))"
+                return 0
+            fi
+        done
+    fi
+}
+
+ui_msg() {
+    local title=$1 text=$2
+    if [[ $UI == whiptail ]]; then
+        whiptail --title " $title " --msgbox "$text" 10 "$MENU_W" 3>&1 1>&2 2>&3
+    else
+        printf '\n[%s]\n%s\n' "$title" "$text" >&2
+    fi
+}
+
+ui_input() {
+    local title=$1 prompt=$2 default=${3:-}
+    if [[ $UI == whiptail ]]; then
+        whiptail --title " $title " --inputbox "$prompt" 10 "$MENU_W" "$default" 3>&1 1>&2 2>&3
+    else
+        local ans
+        printf '\n[%s]\n%s\n' "$title" "$prompt" >&2
+        printf 'Значение%s: ' "${default:+ [$default]}" >&2
+        read -r ans || return 1
+        printf '%s\n' "${ans:-$default}"
+    fi
+}
+
+ui_confirm() {
+    local title=$1 text=$2
+    if [[ $UI == whiptail ]]; then
+        whiptail --title " $title " --yesno "$text" 10 "$MENU_W" 3>&1 1>&2 2>&3
+    else
+        local ans
+        printf '\n[%s]\n%s [y/N]: ' "$title" "$text" >&2
+        read -r ans || return 1
+        [[ $ans == [yYдД] ]]
+    fi
+}
+
+trim() {
+    local s=$1
+    s=${s#"${s%%[![:space:]]*}"}
+    s=${s%"${s##*[![:space:]]}"}
+    printf '%s' "$s"
+}
+
+# ── действия ─────────────────────────────────────────────────────────────────
+ask_name() {
+    # $1 title, $2 prompt, $3 default, $4 auto (1 — сгенерировать пустое),
+    # $5 exclude (имя, которое не считается дублем — для rename)
+    local title=$1 prompt=$2 default=${3:-} auto=${4:-0} exclude=${5:-}
+    local name
+
+    while true; do
+        name=$(ui_input "$title" "$prompt" "$default") || return 1
+        name=$(trim "$name")
+
+        if [[ $name =~ ^[[:space:]]*$ ]]; then
+            if (( auto )); then
+                name="work-$(date +%Y%m%d-%H%M%S)"
+            else
+                ui_msg "Ошибка" "Имя не может быть пустым."
+                continue
+            fi
+        fi
+
+        # первый символ — не дефис, чтобы tmux не принял имя за опцию
+        if [[ ! $name =~ ^[A-Za-z0-9._][A-Za-z0-9._-]{0,49}$ ]]; then
+            ui_msg "Ошибка" "Недопустимое имя.
+Разрешены: a-z A-Z 0-9 . _ -
+Первый символ — не дефис, до 50 символов."
+            continue
+        fi
+
+        if [[ $name != "$exclude" ]] && tmux has-session -t "=$name" 2>/dev/null; then
+            ui_msg "Ошибка" "Сессия «$name» уже существует."
+            continue
+        fi
+
+        printf '%s\n' "$name"
+        return 0
+    done
+}
+
+choose_session() {
+    local title=$1
+    (( ${#S_NAMES[@]} > 0 )) || return 1
+
+    local -a items=()
+    local name
+    for name in "${S_NAMES[@]}"; do
+        items+=("$(printf '%-20s %s' "$name" "${S_INFO[$name]:-}")")
+    done
+
+    local idx
+    idx=$(menu_select "$title" "${items[@]}") || return 1
+    printf '%s\n' "${S_NAMES[$idx]}"
+}
+
+main() {
+    term_size
+
+    local name old new tag act idx msg
+    while true; do
+        load_sessions
+
+        local -a items=()
+        local -a tags=()
+        for name in "${S_NAMES[@]}"; do
+            items+=("$(printf '%-20s %s' "$name" "${S_INFO[$name]:-}")")
+            tags+=("attach"$'\t'"$name")
+        done
+        items+=("+  Создать новую сессию")
+        tags+=("new")
+        if (( ${#S_NAMES[@]} > 0 )); then
+            items+=("~  Переименовать сессию")
+            tags+=("rename")
+            items+=("x  Удалить сессию")
+            tags+=("kill")
+        fi
+        items+=(">  Выйти в обычный shell")
+        tags+=("shell")
+
+        idx=$(menu_select "tmux" "${items[@]}") || exit "$EXIT_SHELL"
+        tag=${tags[$idx]}
+        act=${tag%%$'\t'*}
+
+        case $act in
+            attach)
+                name=${tag#*$'\t'}
+                if tmux attach -t "=$name"; then
+                    exit 0
+                fi
+                ui_msg "Ошибка" "Не удалось подключиться к сессии «$name»."
+                ;;
+            new)
+                name=$(ask_name "Новая сессия" \
+                    "Имя новой сессии (Enter — сгенерировать автоматически):" "" 1) || continue
+                if tmux new-session -s "$name"; then
+                    exit 0
+                fi
+                ui_msg "Ошибка" "Не удалось создать сессию «$name»."
+                ;;
+            rename)
+                old=$(choose_session "Переименовать сессию") || continue
+                new=$(ask_name "Переименовать сессию" \
+                    "Новое имя для «$old»:" "$old" 0 "$old") || continue
+                [[ $new == "$old" ]] && continue
+                if ! tmux rename-session -t "=$old" "$new" 2>/dev/null; then
+                    ui_msg "Ошибка" "Не удалось переименовать сессию."
+                fi
+                ;;
+            kill)
+                name=$(choose_session "Удалить сессию") || continue
+                msg="Удалить сессию «$name»?"
+                if [[ ${S_ATTACHED[$name]:-} == attached ]]; then
+                    msg+=$'\n\n'"К сессии сейчас подключён клиент."
+                fi
+                msg+=$'\n\n'"Все процессы в ней завершатся."
+                if ui_confirm "Удалить сессию" "$msg"; then
+                    if ! tmux kill-session -t "=$name" 2>/dev/null; then
+                        ui_msg "Ошибка" "Не удалось удалить сессию."
+                    fi
+                fi
+                ;;
+            *)
+                exit "$EXIT_SHELL"
+                ;;
+        esac
+    done
+}
+
+# ── точка входа ──────────────────────────────────────────────────────────────
+case ${1:-} in
+    --list)
+        load_sessions
+        if (( ${#S_NAMES[@]} == 0 )); then
+            printf 'нет сессий\n'
+        else
+            for list_name in "${S_NAMES[@]}"; do
+                printf '%s\t%s\n' "$list_name" "${S_INFO[$list_name]:-}"
+            done
+        fi
+        exit 0
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    -V|--version)
+        printf '%s %s\n' "${0##*/}" "$VERSION"
+        exit 0
+        ;;
+    *)
+        if [[ -n ${1:-} ]]; then
+            printf 'Неизвестный аргумент: %s\n\n' "$1" >&2
+            usage >&2
+            exit 2
+        fi
+        ;;
+esac
+
+if ! have tmux; then
+    exit "$EXIT_SHELL"
+fi
+
+# уже в tmux / неинтерактивный запуск / нет нормального терминала
+if [[ -n ${TMUX:-} || ! -t 0 || ! -t 1 || ${TERM:-dumb} == dumb ]]; then
+    exit "$EXIT_SHELL"
+fi
+
+have whiptail || UI=plain
+
+main
+exit "$EXIT_SHELL"
